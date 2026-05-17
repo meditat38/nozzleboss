@@ -9,49 +9,109 @@ np.set_printoptions(suppress=True)
 from .utils import bevel_path
 
 
-def segments_to_meshdata(segments):#edges only on extrusion
-        segs = segments
-        verts=[]
-        edges=[]
-        del_offset=0 #to travel segs in a row, one gets deleted, need to keep track of index for edges
-        for i in range(len(segs)):
-                if i>=len(segs)-1:
-                        if segs[i].style == 'extrude':
-                                verts.append([segs[i].coords['X'],segs[i].coords['Y'],segs[i].coords['Z'] ])
+def extract_segment_type(line):
+    """Extract TYPE: from gcode comment like ;TYPE:Outer wall"""
+    if not line:
+        return None
+    match = re.search(r'TYPE:(\S+)', line)
+    if match:
+        return match.group(1)
+    return None
 
-                        break
 
-                #start of extrusion for first time
-                if segs[i].style == 'travel' and segs[i+1].style == 'extrude':
-                        verts.append([segs[i].coords['X'],segs[i].coords['Y'],segs[i].coords['Z'] ])
-                        verts.append([segs[i+1].coords['X'],segs[i+1].coords['Y'],segs[i+1].coords['Z'] ])
-                        edges.append([i-del_offset,(i-del_offset)+1])
+def segments_to_meshdata(segments, track_types=False):#edges only on extrusion
+    segs = segments
+    verts=[]
+    edges=[]
+    vert_segment_types = []  # Track which segment type each vert belongs to
+    del_offset=0 #to travel segs in a row, one gets deleted, need to keep track of index for edges
+    
+    if track_types:
+        print(f"DEBUG segments_to_meshdata: track_types=True, processing {len(segs)} segments")
+    
+    for i in range(len(segs)):
+        if i>=len(segs)-1:
+            if segs[i].style == 'extrude':
+                verts.append([segs[i].coords['X'],segs[i].coords['Y'],segs[i].coords['Z'] ])
+                if track_types:
+                    seg_type = segs[i].segment_type
+                    vert_segment_types.append(seg_type)
+                    print(f"DEBUG: seg {i} has type '{seg_type}'")
 
-                #mitte, current and next are extrusion, only add next, current is already in vert list
-                if segs[i].style == 'extrude' and segs[i+1].style == 'extrude':
-                        verts.append([segs[i+1].coords['X'],segs[i+1].coords['Y'],segs[i+1].coords['Z'] ])
-                        edges.append([i-del_offset,(i-del_offset)+1])
+            break
 
-   
+        #start of extrusion for first time
+        if segs[i].style == 'travel' and segs[i+1].style == 'extrude':
+            verts.append([segs[i].coords['X'],segs[i].coords['Y'],segs[i].coords['Z'] ])
+            verts.append([segs[i+1].coords['X'],segs[i+1].coords['Y'],segs[i+1].coords['Z'] ])
+            edges.append([i-del_offset,(i-del_offset)+1])
+            if track_types:
+                vert_segment_types.append(segs[i].segment_type)
+                vert_segment_types.append(segs[i+1].segment_type)
+                print(f"DEBUG: seg {i} type='{segs[i].segment_type}', seg {i+1} type='{segs[i+1].segment_type}'")
 
-                if segs[i].style == 'travel' and segs[i+1].style == 'travel':
-                        del_offset+=1
+        #mitte, current and next are extrusion, only add next, current is already in vert list
+        if segs[i].style == 'extrude' and segs[i+1].style == 'extrude':
+            verts.append([segs[i+1].coords['X'],segs[i+1].coords['Y'],segs[i+1].coords['Z'] ])
+            edges.append([i-del_offset,(i-del_offset)+1])
+            if track_types:
+                vert_segment_types.append(segs[i+1].segment_type)
+                print(f"DEBUG: seg {i+1} type='{segs[i+1].segment_type}'")
 
+        if segs[i].style == 'travel' and segs[i+1].style == 'travel':
+            del_offset+=1
+
+    if track_types:
+        print(f"DEBUG: Final vert_segment_types list has {len(vert_segment_types)} items")
+        return verts, edges, vert_segment_types
+    else:
         return verts, edges
-        
+       
  
 
 
-def obj_from_pydata(name, verts, edges=None, close=True, collection_name=None):
+def create_vertex_groups_from_types(obj, vert_segment_types):
+    """Create vertex groups based on segment types (e.g. 'Outer wall')"""
+    if not vert_segment_types:
+        print("DEBUG: vert_segment_types is empty!")
+        return
+    
+    print(f"DEBUG: vert_segment_types = {vert_segment_types}")
+    
+    # Get unique segment types (exclude None)
+    unique_types = set(t for t in vert_segment_types if t is not None)
+    
+    print(f"DEBUG: unique_types = {unique_types}")
+    
+    if not unique_types:
+        print("DEBUG: No segment types found (all None)!")
+        return
+    
+    # Create a vertex group for each type
+    for seg_type in unique_types:
+        print(f"DEBUG: Creating vertex group '{seg_type}'")
+        # Create vertex group
+        vgroup = obj.vertex_groups.new(name=seg_type)
+        
+        # Add vertices that belong to this type
+        for vert_idx, v_type in enumerate(vert_segment_types):
+            if v_type == seg_type:
+                vgroup.add([vert_idx], 1.0, 'REPLACE')
+    
+    print(f"DEBUG: Created {len(unique_types)} vertex groups")
+
+
+def obj_from_pydata(name, verts, edges=None, close=True, collection_name=None, vert_segment_types=None):
     if edges is None:
         # join vertices into one uninterrupted chain of edges.
         edges = [[i, i+1] for i in range(len(verts)-1)]
         if close:
             edges.append([len(verts)-1, 0]) #connect last to first
-            
+           
     me = bpy.data.meshes.new(name)
     me.from_pydata(verts, edges, [])   
-      
+    me.update()  # Update mesh to ensure proper data
+    
     obj = bpy.data.objects.new(name, me)
    
    
@@ -67,10 +127,16 @@ def obj_from_pydata(name, verts, edges=None, close=True, collection_name=None):
         else:
             collection = bpy.data.collections.new(collection_name)
             bpy.context.scene.collection.children.link(collection) #link collection to main scene
-            bpy.data.collections[collection_name].objects.link(obj) 
+            bpy.data.collections[collection_name].objects.link(obj)
+    else:
+        # If no collection specified, add to scene collection
+        bpy.context.scene.collection.objects.link(obj)
+    
+    # Create vertex groups based on segment types
+    if vert_segment_types:
+        create_vertex_groups_from_types(obj, vert_segment_types)
     
     return obj
-
 
 
 
@@ -103,6 +169,11 @@ class GcodeParser:
                 bits = self.line.split(';',1)
                 if (len(bits) > 1):
                     GcodeParser.comment = bits[1]
+                    # Check for segment type in comment and update model's current type
+                    seg_type = extract_segment_type(bits[1])
+                    if seg_type:
+                        self.model.current_segment_type = seg_type
+                        print(f"DEBUG: Found new segment type: {seg_type}")
                 
                 # extract & clean command
                 command = bits[0].strip()
@@ -195,6 +266,7 @@ class GcodeModel:
                 self.isRelative = False
                 self.color = [0,0,0,0,0,0,0,0] #RGBCMYKW
                 self.toolnumber = 0
+                self.current_segment_type = None  # Track current segment type for propagation
                 
                 # the segments
                 self.segments = []
@@ -213,9 +285,9 @@ class GcodeModel:
                         #print(coords)                    
                         if axis in coords:
                                 if self.isRelative: 
-                                        coords[axis] += args[axis]
+                                    coords[axis] += args[axis]
                                 else:
-                                        coords[axis] = args[axis]
+                                    coords[axis] = args[axis]
                         else:
                                 self.warn("Unknown axis '%s'"%axis)
                                 
@@ -235,7 +307,7 @@ class GcodeModel:
                     absolute["E"] = 0
                 else:
                     absolute["E"] = args["E"]
-                    
+                        
                     
           
                 seg = Segment(
@@ -245,11 +317,12 @@ class GcodeModel:
                         self.toolnumber,
                         #self.layerIdx,
                         self.parser.lineNb,
-                        self.parser.line)
+                        self.parser.line,
+                        segment_type=self.current_segment_type)
              
                 if seg.coords['X'] != self.relative['X']+self.offset["X"] or seg.coords['Y'] != self.relative['Y']+self.offset["Y"] or seg.coords['Z'] != self.relative['Z']+self.offset["Z"]:     
                     self.addSegment(seg)
-                    
+                        
                     
 
                 # update model coords
@@ -395,12 +468,13 @@ class GcodeModel:
                                            
                                        #make sure P1 hasn't been written before, compare with previous line
                                        if new_coords['X'] != coords['X'] or new_coords['Y'] != coords['Y'] or new_coords['Z'] != coords['Z']:   #write segment only if movement changes, avoid double coordinates due to same start and endpoint of linspace
-                                               
-                                               new_seg=Segment(seg.type, new_coords, seg.color, seg.toolnumber, seg.lineNb, seg.line)
-                                               new_seg.layerIdx = seg.layerIdx
-                                               new_seg.style = seg.style
-                                               subdivided_segs.append(new_seg)
-                                                             
+                                           
+                                           new_seg=Segment(seg.type, new_coords, seg.color, seg.toolnumber, seg.lineNb, seg.line)
+                                           new_seg.layerIdx = seg.layerIdx
+                                           new_seg.style = seg.style
+                                           new_seg.segment_type = seg.segment_type
+                                           subdivided_segs.append(new_seg)
+                                           
                         else:
                                 
                                 subdivided_segs.append(seg) 
@@ -412,20 +486,20 @@ class GcodeModel:
                 
 
                  
-            
+           
         #create blender curve and vertex_info in text file(coords, style, color...)
         def draw(self, split_layers=False):
                 if split_layers:
                         i=0
                         for layer in self.layers:
-                                verts, edges = segments_to_meshdata(layer)
+                                verts, edges, vert_segment_types = segments_to_meshdata(layer, track_types=True)
                                 if len(verts)>0:
-                                        obj_from_pydata(str(i), verts, edges, close=False, collection_name="Layers")
+                                        obj_from_pydata(str(i), verts, edges, close=False, collection_name="Layers", vert_segment_types=vert_segment_types)
                                         i+=1
 
                 else:
-                        verts, edges = segments_to_meshdata(self.segments)
-                        obj = obj_from_pydata("Gcode", verts, edges, close=False, collection_name="Layers")
+                        verts, edges, vert_segment_types = segments_to_meshdata(self.segments, track_types=True)
+                        obj = obj_from_pydata("Gcode", verts, edges, close=False, collection_name="Layers", vert_segment_types=vert_segment_types)
                         
                         #set active and bevel
                         bpy.context.view_layer.objects.active = bpy.data.objects[obj.name]
@@ -467,7 +541,7 @@ class GcodeModel:
 
 
 class Segment:
-        def __init__(self, type, coords, color, toolnumber, lineNb, line):
+        def __init__(self, type, coords, color, toolnumber, lineNb, line, segment_type=None):
                 self.type = type
                 self.coords = coords
                 self.color = color
@@ -476,6 +550,8 @@ class Segment:
                 self.line = line
                 self.style = None
                 self.layerIdx = None
+                # Use passed segment_type, otherwise try to extract from line
+                self.segment_type = segment_type if segment_type is not None else extract_segment_type(line)
                 
                 #self.distance = None
                 #self.extrudate = None
@@ -494,13 +570,10 @@ class Layer:
         
 
 
-        
+           
 
 if __name__ == '__main__':
         path = "test.gcode"
 
         parser = GcodeParser()
         model = parser.parseFile(path)
-        
-        
-        

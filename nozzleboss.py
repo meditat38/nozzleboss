@@ -195,24 +195,27 @@ class NOZZLEBOSS_PT_Panel(bpy.types.Panel):
 
         col.separator(factor=1.5)
         
-        row=col.row() #aus col new row machen, beginnt neue zeile und startet dann in der reihe
-        row.label(text="Flow Multiplier:") 
-        row.separator(factor=2)
-        row.label(text="min:") 
-        row.label(text="max:") 
-        row = col.row(align=True)
-        row.prop_search(nozzleboss, "flow_map", context.active_object.data, "vertex_colors", text="")
-        row.separator()
-        row.prop(nozzleboss, "min_flow")
-        row.prop(nozzleboss, "max_flow")
+        if context.active_object:
+            row=col.row() #aus col new row machen, beginnt neue zeile und startet dann in der reihe
+            row.label(text="Flow Multiplier:") 
+            row.separator(factor=2)
+            row.label(text="min:") 
+            row.label(text="max:") 
+            row = col.row(align=True)
+            row.prop_search(nozzleboss, "flow_map", context.active_object.data, "vertex_colors", text="")
+            row.separator()
+            row.prop(nozzleboss, "min_flow")
+            row.prop(nozzleboss, "max_flow")
 
-        col.separator()
-        col.label(text="Speed Multiplier:") 
-        row = col.row(align=True)
-        row.prop_search(nozzleboss, "speed_map", context.active_object.data, "vertex_colors", text="")    
-        row.separator()   
-        row.prop(nozzleboss, "min_speed")
-        row.prop(nozzleboss, "max_speed")
+            col.separator()
+            col.label(text="Speed Multiplier:") 
+            row = col.row(align=True)
+            row.prop_search(nozzleboss, "speed_map", context.active_object.data, "vertex_colors", text="")    
+            row.separator()   
+            row.prop(nozzleboss, "min_speed")
+            row.prop(nozzleboss, "max_speed")
+        else:
+            col.label(text="No object selected", icon="ERROR")
      
         col.separator(factor=2)
     
