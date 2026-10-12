@@ -69,7 +69,12 @@ class gcode_settings(bpy.types.PropertyGroup):
         description="Subdivide Segments that are bigger then value, needed to increase resolution when modifyng the mesh",
         default = False
         )
-        
+
+    subdivide_outer_only: BoolProperty(
+        name="Only subdivide outer walls",
+        description="When enabled, only segments tagged as outer walls are subdivided.",
+        default = False
+        )
         
     tool_color: BoolProperty(
         name="Toolchange based on color:",
@@ -126,20 +131,93 @@ class gcode_settings(bpy.types.PropertyGroup):
         default = 30
         )
         
+    z_hop: FloatProperty(
+        name = "",
+        description = "Height of Z-Hop for travel moves",
+        default = 0.0,
+        min = 0.0,
+        max = 50.0
+        )
 
+    z_hop_speed: FloatProperty(
+        name = "",
+        description = "Feedrate for Z-Hop moves in mm/s",
+        default = 60.0,
+        min = 0.0,
+        max = 5000.0
+        )
+        
+    retract_length: FloatProperty(
+        name = "",
+        description = "Length to retract for travel moves (mm)",
+        default = 0.8,
+        min = 0.0,
+        max = 20.0
+        )
+
+    retract_speed: FloatProperty(
+        name = "",
+        description = "Retraction feedrate in mm/s",
+        default = 35.0,
+        min = 0.0,
+        max = 5000.0
+        )
+
+    retract_min_travel: FloatProperty(
+        name = "",
+        description = "Minimum travel (mm) to trigger retract/z-hop",
+        default = 2.0,
+        min = 0.0,
+        max = 100.0
+        )
+        
     color_T0: FloatVectorProperty(
         name="Color",
         description="When ever this color is reached on export, add custom G-code in T0 textblock to export file",
         subtype='COLOR', size=3, min=0, max=1, precision=3, step=0.1,
-        default=(1.0, 1.0, 1.0)
+        default=(0.0, 0.0, 0.0)
     )
     
     color_T1: FloatVectorProperty(
         name="Color",
         description="When ever this color is reached on export, add custom G-code in T0 textblock to export file",
         subtype='COLOR', size=3, min=0, max=1, precision=3, step=0.1,
-        default=(0.0, 0.0, 0.0)
+        default=(1.0, 1.0, 1.0)
     )
+
+    color_T2: FloatVectorProperty(
+        name="Color",
+        description="Tool T2 comparison color",
+        subtype='COLOR', size=3, min=0, max=1, precision=3, step=0.1,
+        default=(1.0, 0.0, 0.0)
+    )
+
+    color_T3: FloatVectorProperty(
+        name="Color",
+        description="Tool T3 comparison color",
+        subtype='COLOR', size=3, min=0, max=1, precision=3, step=0.1,
+        default=(0.0, 1.0, 0.0)
+    )
+
+    color_T4: FloatVectorProperty(
+        name="Color",
+        description="Tool T4 comparison color",
+        subtype='COLOR', size=3, min=0, max=1, precision=3, step=0.1,
+        default=(0.0, 0.0, 1.0)
+    )
+
+    T2: StringProperty(
+        name="Custom G-code per color",
+        default="T2"
+        )
+    T3: StringProperty(
+        name="Custom G-code per color",
+        default="T3"
+        )
+    T4: StringProperty(
+        name="Custom G-code per color",
+        default="T4"
+        )
 
 
 
@@ -178,6 +256,10 @@ class NOZZLEBOSS_PT_Panel(bpy.types.Panel):
         sub = row.row()
         sub.prop(nozzleboss, "max_segment_size")  
         sub.enabled =  nozzleboss.subdivide #sub is not grayed out when 'linesegmentatio/subdivide/ bool is True
+
+        outer = col.row(align=True)
+        outer.enabled = nozzleboss.subdivide
+        outer.prop(nozzleboss, 'subdivide_outer_only')
          
          
         col2=col.column(align=True) 
@@ -192,6 +274,11 @@ class NOZZLEBOSS_PT_Panel(bpy.types.Panel):
         col.prop(nozzleboss, "nozzle_diameter", text='Nozzle Size')
         col.prop(nozzleboss, "travel_speed", text='Travel Speed')
         col.prop(nozzleboss, "extrusion_speed", text='Extrusion Speed')
+        col.prop(nozzleboss, "z_hop", text='Z-Hop Height')
+        col.prop(nozzleboss, "z_hop_speed", text='Z-Hop Speed')
+        col.prop(nozzleboss, "retract_length", text='Retract Length')
+        col.prop(nozzleboss, "retract_speed", text='Retract Speed')
+        col.prop(nozzleboss, "retract_min_travel", text='Min Travel for Retract')
 
         col.separator(factor=1.5)
         
@@ -202,7 +289,7 @@ class NOZZLEBOSS_PT_Panel(bpy.types.Panel):
             row.label(text="min:") 
             row.label(text="max:") 
             row = col.row(align=True)
-            row.prop_search(nozzleboss, "flow_map", context.active_object.data, "vertex_colors", text="")
+            row.prop_search(nozzleboss, "flow_map", context.active_object.data, "color_attributes", text="")
             row.separator()
             row.prop(nozzleboss, "min_flow")
             row.prop(nozzleboss, "max_flow")
@@ -210,7 +297,7 @@ class NOZZLEBOSS_PT_Panel(bpy.types.Panel):
             col.separator()
             col.label(text="Speed Multiplier:") 
             row = col.row(align=True)
-            row.prop_search(nozzleboss, "speed_map", context.active_object.data, "vertex_colors", text="")    
+            row.prop_search(nozzleboss, "speed_map", context.active_object.data, "color_attributes", text="")    
             row.separator()   
             row.prop(nozzleboss, "min_speed")
             row.prop(nozzleboss, "max_speed")
@@ -222,15 +309,48 @@ class NOZZLEBOSS_PT_Panel(bpy.types.Panel):
         #col.label(text="Tool change based on color:") 
         col.prop(nozzleboss, 'tool_color')
        
-        
-        row = col.row(align=True)
-        row.enabled = nozzleboss.tool_color
-        row.prop(nozzleboss, "color_T0", text="")
-        row.prop_search(nozzleboss, "T0", bpy.data, "texts", text="")   
-        row.separator(factor=2)   
-        row.prop(nozzleboss, "color_T1", text="")
-        row.prop_search(nozzleboss, "T1", bpy.data, "texts", text="")   
-
+        if nozzleboss.tool_color:
+            box = col.box()
+            box.label(text="Tool change colors:")
+            for tool_index in range(5):
+                row = box.row(align=True)
+                row.scale_y = 1.0
+                if tool_index == 0:
+                    row.prop(nozzleboss, "color_T0", text="T0")
+                    row.prop_search(nozzleboss, "T0", bpy.data, "texts", text="")
+                elif tool_index == 1:
+                    row.prop(nozzleboss, "color_T1", text="T1")
+                    row.prop_search(nozzleboss, "T1", bpy.data, "texts", text="")
+                elif tool_index == 2:
+                    row.prop(nozzleboss, "color_T2", text="T2")
+                    row.prop_search(nozzleboss, "T2", bpy.data, "texts", text="")
+                elif tool_index == 3:
+                    row.prop(nozzleboss, "color_T3", text="T3")
+                    row.prop_search(nozzleboss, "T3", bpy.data, "texts", text="")
+                else:
+                    row.prop(nozzleboss, "color_T4", text="T4")
+                    row.prop_search(nozzleboss, "T4", bpy.data, "texts", text="")
+        else:
+            row = col.row(align=True)
+            row.enabled = False
+            row.prop(nozzleboss, "color_T0", text="T0")
+            row.prop_search(nozzleboss, "T0", bpy.data, "texts", text="")
+            row = col.row(align=True)
+            row.enabled = False
+            row.prop(nozzleboss, "color_T1", text="T1")
+            row.prop_search(nozzleboss, "T1", bpy.data, "texts", text="")
+            row = col.row(align=True)
+            row.enabled = False
+            row.prop(nozzleboss, "color_T2", text="T2")
+            row.prop_search(nozzleboss, "T2", bpy.data, "texts", text="")
+            row = col.row(align=True)
+            row.enabled = False
+            row.prop(nozzleboss, "color_T3", text="T3")
+            row.prop_search(nozzleboss, "T3", bpy.data, "texts", text="")
+            row = col.row(align=True)
+            row.enabled = False
+            row.prop(nozzleboss, "color_T4", text="T4")
+            row.prop_search(nozzleboss, "T4", bpy.data, "texts", text="")
 
         col.separator(factor=2)
 
@@ -263,7 +383,7 @@ def import_gcode(context, filepath):
         model = parse.parseFile(filepath)
         
         if nozzleboss.subdivide:
-            model.subdivide(nozzleboss.max_segment_size)
+            model.subdivide(nozzleboss.max_segment_size, outer_only=nozzleboss.subdivide_outer_only)
         model.classifySegments()
         if nozzleboss.split_layers:
             model.draw(split_layers=True)
@@ -288,6 +408,15 @@ def export_gcode(context):
     if not bpy.data.texts.get('T1'):
         bpy.data.texts.new('T1')
         bpy.data.texts['T1'].write('T1; switch to extruder T1 (any G-code macro can be passed here)\n')
+    if not bpy.data.texts.get('T2'):
+        bpy.data.texts.new('T2')
+        bpy.data.texts['T2'].write('T2; switch to extruder T2 (any G-code macro can be passed here)\n')
+    if not bpy.data.texts.get('T3'):
+        bpy.data.texts.new('T3')
+        bpy.data.texts['T3'].write('T3; switch to extruder T3 (any G-code macro can be passed here)\n')
+    if not bpy.data.texts.get('T4'):
+        bpy.data.texts.new('T4')
+        bpy.data.texts['T4'].write('T4; switch to extruder T4 (any G-code macro can be passed here)\n')
     if not bpy.data.texts.get('Start'):
         bpy.data.texts.new('Start')
         bpy.data.texts['Start'].write(';nozzleboss\n')
@@ -331,15 +460,13 @@ def export_gcode(context):
     prev_F=-1
     prev_tool_color = -1
 
-    #create vertex colors maps, most cases importer could already do that, but in case you have handdrawn/beveled extrusion path
-    if not obj.data.vertex_colors.get('Flow'):
-        obj.data.vertex_colors.new(name='Flow')
-    if not obj.data.vertex_colors.get('Speed'):
-        obj.data.vertex_colors.new(name='Speed')
-    if not obj.data.vertex_colors.get('Speed'):
-        obj.data.vertex_colors.new(name='Speed')
-    if not obj.data.vertex_colors.get('Tool'):
-        obj.data.vertex_colors.new(name='Tool')
+    #create color attributes maps, most cases importer could already do that, but in case you have handdrawn/beveled extrusion path
+    if not obj.data.color_attributes.get('Flow'):
+        obj.data.color_attributes.new(name='Flow', type='FLOAT_COLOR', domain='CORNER')
+    if not obj.data.color_attributes.get('Speed'):
+        obj.data.color_attributes.new(name='Speed', type='FLOAT_COLOR', domain='CORNER')
+    if not obj.data.color_attributes.get('Tool'):
+        obj.data.color_attributes.new(name='Tool', type='FLOAT_COLOR', domain='CORNER')
         
         
     #Read extrusion and speed multiplier vertex color map
@@ -356,14 +483,15 @@ def export_gcode(context):
     ##islands of extrusions vert indices
     for island in sorted_islands:
         travel_dist = (Vector(verts[island[0]])-Vector(P2)).length #only retract when travel is longer than...
-        if travel_dist > 1:
-            _txt.append('G10 \n')
+        if travel_dist > nozzleboss.retract_min_travel:
+            _txt.append(f'G1 E-{nozzleboss.retract_length:.3f} F{int(nozzleboss.retract_speed*60)}\n')
         
-        #travel only from island to island    
-        _txt.append(travel(P2,verts[island[0]], travel_speed*60, extrusion_speed*60)) #verts[island[0]]=next coords
-        
-        if travel_dist > 1:
-            _txt.append('G11 \n')   
+        # travel only from island to island
+        z_hop_val = nozzleboss.z_hop if travel_dist > nozzleboss.retract_min_travel else 0.0
+        _txt.append(travel(P2, verts[island[0]], travel_speed*60, extrusion_speed*60, z_hop_val, nozzleboss.z_hop_speed*60)) #verts[island[0]]=next coords
+
+        if travel_dist > nozzleboss.retract_min_travel:
+            _txt.append(f'G1 E{nozzleboss.retract_length:.3f} F{int(nozzleboss.retract_speed*60)}\n')
             
             
         
@@ -393,27 +521,41 @@ def export_gcode(context):
             height=np.linalg.norm(P3-P2)
 
             width=nozzle_diameter*1.5
-            multiplier = extrusion_weights[e_edges[i+1]]#
-            multiplier = remap(multiplier, nozzleboss.min_flow, nozzleboss.max_flow)
+            flow_color = extrusion_weights[e_edges[i+1]]
+            if isinstance(flow_color, tuple) or isinstance(flow_color, list) or hasattr(flow_color, '__len__'):
+                flow_color = flow_color[0]*0.299 + flow_color[1]*0.587 + flow_color[2]*0.114
+            multiplier = remap(flow_color, nozzleboss.min_flow, nozzleboss.max_flow)
             E_volume=dist*height*width*multiplier
             E=E_volume/2.405281875  ##E axis in mm not mm³, 2.405 is 1mm of 1.75mm filament (r*(PI*r), 0.875*PI*0.875
 
 
     #calcF
 
-            speed_weight =  remap(speed_weights[e_edges[i]], nozzleboss.min_speed, nozzleboss.max_speed)
+            speed_color = speed_weights[e_edges[i]]
+            if isinstance(speed_color, tuple) or isinstance(speed_color, list) or hasattr(speed_color, '__len__'):
+                speed_color = speed_color[0]*0.299 + speed_color[1]*0.587 + speed_color[2]*0.114
+            speed_weight = remap(speed_color, nozzleboss.min_speed, nozzleboss.max_speed)
             F = extrusion_speed*speed_weight 
 
             #check if tool color changed and append corresponding textblock
-            if tool_colors[e_edges[i+1]]!=prev_tool_color:
-
-                if tool_colors[e_edges[i+1]]<0.5:
-                    _txt.append(read_textblock('T1'))
-                else:
-                    _txt.append(read_textblock('T0'))  
-
-                prev_tool_color=tool_colors[e_edges[i+1]]   
-
+            if nozzleboss.tool_color:
+                current_color = tool_colors[e_edges[i+1]]
+                tool_targets = [
+                    tuple(nozzleboss.color_T0),
+                    tuple(nozzleboss.color_T1),
+                    tuple(nozzleboss.color_T2),
+                    tuple(nozzleboss.color_T3),
+                    tuple(nozzleboss.color_T4),
+                ]
+                best_tool = min(
+                    range(len(tool_targets)),
+                    key=lambda idx: (current_color[0]-tool_targets[idx][0])**2 +
+                                      (current_color[1]-tool_targets[idx][1])**2 +
+                                      (current_color[2]-tool_targets[idx][2])**2
+                )
+                if best_tool != prev_tool_color:
+                    _txt.append(read_textblock(f'T{best_tool}'))
+                    prev_tool_color = best_tool
 
             _txt.append(extrude(P1, P2, E, F, prev_F)) 
 

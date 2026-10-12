@@ -425,68 +425,67 @@ class GcodeModel:
                         layer.append(seg)
                         coords = seg.coords
 
-        def subdivide(self, subd_threshold):
+        def subdivide(self, subd_threshold, outer_only=False):
             #divide edge if > subd_threshold
 
-                subdivided_segs=[]
+            subdivided_segs=[]
+            
+            # start model at 0
+            coords = {
+                "X":0.0,
+                "Y":0.0,
+                "Z":0.0,
+                "F":0.0, #no interpolation
+                "E":0.0}
+
+            outer_types = {"outer", "outer wall"}
+
+            for seg in self.segments:
+                # calc XYZ distance
+                d  = (seg.coords["X"]-coords["X"])**2
+                d += (seg.coords["Y"]-coords["Y"])**2
+                d += (seg.coords["Z"]-coords["Z"])**2
+                seg.distance = math.sqrt(d)
+
+                if outer_only:
+                    seg_type = seg.segment_type.lower() if seg.segment_type else ""
+                    if seg_type not in outer_types:
+                        subdivided_segs.append(seg)
+                        coords = seg.coords
+                        continue
                 
-                # start model at 0
-                coords = {
-                        "X":0.0,
-                        "Y":0.0,
-                        "Z":0.0,
-                        "F":0.0, #no interpolation
-                        "E":0.0}
+                if seg.distance > subd_threshold:
+                    
+                    subdivs=math.ceil(seg.distance/subd_threshold) #ceil makes sure that linspace interval is at least 2
+                    #print("num of subd: ", math.ceil(subdivs))
+                    P1=coords
+                    P2=seg.coords
 
-                for seg in self.segments:
-                        # calc XYZ distance
-                        d  = (seg.coords["X"]-coords["X"])**2
-                        d += (seg.coords["Y"]-coords["Y"])**2
-                        d += (seg.coords["Z"]-coords["Z"])**2
-                        seg.distance = math.sqrt(d)
-                        
-                        if seg.distance > subd_threshold:
-                                
-                                subdivs=math.ceil(seg.distance/subd_threshold) #ceil makes sure that linspace interval is at least 2
-                                #print("num of subd: ", math.ceil(subdivs))
-                                P1=coords
-                                P2=seg.coords
+                    #interpolated points
+                    interp_coords = np.linspace(list(P1.values()), list(P2.values()), num=subdivs, endpoint=True)
 
-                                #interpolated points
-                                interp_coords = np.linspace(list(P1.values()), list(P2.values()), num=subdivs, endpoint=True)
-
-                                for i in range(len(interp_coords)):   #inteprolated points array back to segment object
-
-                                       new_coords = {"X":interp_coords[i][0], "Y":interp_coords[i][1], "Z":interp_coords[i][2], "F":seg.coords["F"]}  #E/subdivs is for relative extrusion, absolute extrusion need "E":interp_coords[i][4]
-                                       #print("interp_coords_new:", new_coords)
-                                       if seg.coords["E"] > 0:
-                                           new_coords["E"] = round(seg.coords["E"]/(subdivs-1),5)
-                                       else:
-                                           new_coords["E"] = 0
-                                           
-                                           
-                                           
-                                       #make sure P1 hasn't been written before, compare with previous line
-                                       if new_coords['X'] != coords['X'] or new_coords['Y'] != coords['Y'] or new_coords['Z'] != coords['Z']:   #write segment only if movement changes, avoid double coordinates due to same start and endpoint of linspace
-                                           
-                                           new_seg=Segment(seg.type, new_coords, seg.color, seg.toolnumber, seg.lineNb, seg.line)
-                                           new_seg.layerIdx = seg.layerIdx
-                                           new_seg.style = seg.style
-                                           new_seg.segment_type = seg.segment_type
-                                           subdivided_segs.append(new_seg)
-                                           
+                    for i in range(len(interp_coords)):   #inteprolated points array back to segment object
+                        new_coords = {"X":interp_coords[i][0], "Y":interp_coords[i][1], "Z":interp_coords[i][2], "F":seg.coords["F"]}  #E/subdivs is for relative extrusion, absolute extrusion need "E":interp_coords[i][4]
+                        #print("interp_coords_new:", new_coords)
+                        if seg.coords["E"] > 0:
+                            new_coords["E"] = round(seg.coords["E"]/(subdivs-1),5)
                         else:
-                                
-                                subdivided_segs.append(seg) 
+                            new_coords["E"] = 0
 
-                                
-                        coords = seg.coords #P1 becomes P2
+                        #make sure P1 hasn't been written before, compare with previous line
+                        if new_coords['X'] != coords['X'] or new_coords['Y'] != coords['Y'] or new_coords['Z'] != coords['Z']:   #write segment only if movement changes, avoid double coordinates due to same start and endpoint of linspace
+                            new_seg=Segment(seg.type, new_coords, seg.color, seg.toolnumber, seg.lineNb, seg.line)
+                            new_seg.layerIdx = seg.layerIdx
+                            new_seg.style = seg.style
+                            new_seg.segment_type = seg.segment_type
+                            subdivided_segs.append(new_seg)
+                else:
+                    subdivided_segs.append(seg)
 
-                self.segments=subdivided_segs
-                
+                coords = seg.coords #P1 becomes P2
 
-                 
-           
+            self.segments=subdivided_segs
+
         #create blender curve and vertex_info in text file(coords, style, color...)
         def draw(self, split_layers=False):
                 if split_layers:
@@ -505,10 +504,10 @@ class GcodeModel:
                         bpy.context.view_layer.objects.active = bpy.data.objects[obj.name]
                         bevel_path(bpy.data.objects[obj.name])
                         
-                        #create vcol maps and textblocks
-                        obj.data.vertex_colors.new(name='Speed')
-                        obj.data.vertex_colors.new(name='Flow')
-                        obj.data.vertex_colors.new(name='Tool')
+                        #create color attribute maps and textblocks
+                        obj.data.color_attributes.new(name='Speed', type='FLOAT_COLOR', domain='CORNER')
+                        obj.data.color_attributes.new(name='Flow', type='FLOAT_COLOR', domain='CORNER')
+                        obj.data.color_attributes.new(name='Tool', type='FLOAT_COLOR', domain='CORNER')
 
                         if not bpy.data.texts.get('T0'):
                             bpy.data.texts.new('T0')
@@ -516,6 +515,15 @@ class GcodeModel:
                         if not bpy.data.texts.get('T1'):
                             bpy.data.texts.new('T1')
                             bpy.data.texts['T1'].write('T1; switch to extruder T1 (any G-code macro can be passed here)\n')
+                        if not bpy.data.texts.get('T2'):
+                            bpy.data.texts.new('T2')
+                            bpy.data.texts['T2'].write('T2; switch to extruder T2 (any G-code macro can be passed here)\n')
+                        if not bpy.data.texts.get('T3'):
+                            bpy.data.texts.new('T3')
+                            bpy.data.texts['T3'].write('T3; switch to extruder T3 (any G-code macro can be passed here)\n')
+                        if not bpy.data.texts.get('T4'):
+                            bpy.data.texts.new('T4')
+                            bpy.data.texts['T4'].write('T4; switch to extruder T4 (any G-code macro can be passed here)\n')
                         if not bpy.data.texts.get('Start'):
                             bpy.data.texts.new('Start')
                             bpy.data.texts['Start'].write(';nozzleboss\n')

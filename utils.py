@@ -24,14 +24,28 @@ def read_textblock(name):
     return textblock
 
 
-def travel(coords, next, travel_speed, extrusion_speed):
+def travel(coords, next, travel_speed, extrusion_speed, z_hop_height=0.0, z_hop_speed=600):
     x,y,z = coords[0], coords[1], coords[2]
     next_x, next_y, next_z = next[0], next[1], next[2]
     gcode_cmd=''
 
-    gcode_cmd+='G1 F'+str(travel_speed)+'\n'
-        
-    gcode_cmd+='G1 '
+    if z_hop_height > 0.0:
+        gcode_cmd += 'G1 F' + str(int(z_hop_speed)) + '\n'
+        gcode_cmd += 'G1 Z' + str(round(z + z_hop_height, 4)) + '\n'
+        gcode_cmd += 'G1 F' + str(int(travel_speed)) + '\n'
+        gcode_cmd += 'G1 '
+        if next_x != x:
+            gcode_cmd += 'X' + str(round(next_x, 4)) + ' '
+        if next_y != y:
+            gcode_cmd += 'Y' + str(round(next_y, 4)) + ' '
+        gcode_cmd += 'Z' + str(round(z + z_hop_height, 4)) + '\n'
+        gcode_cmd += 'G1 F' + str(int(z_hop_speed)) + '\n'
+        gcode_cmd += 'G1 Z' + str(round(next_z, 4)) + '\n'
+        gcode_cmd += 'G1 F' + str(int(extrusion_speed)) + '\n'
+        return gcode_cmd
+
+    gcode_cmd += 'G1 F'+str(travel_speed)+'\n'
+    gcode_cmd += 'G1 '
     
     #only changed coords
     if next_x!=x:
@@ -40,10 +54,8 @@ def travel(coords, next, travel_speed, extrusion_speed):
         gcode_cmd+='Y'+str(round(next_y,4))+' '
     if next_z!=z:
         gcode_cmd+='Z'+str(round(next_z,4))
-#    gcode_cmd+='G11 \n'
-#        
 
-    gcode_cmd+='\nG1 '+'F'+str(extrusion_speed)+'\n'  
+    gcode_cmd+='\nG1 '+'F'+str(int(extrusion_speed))+'\n'  
     
     return gcode_cmd
 
@@ -62,9 +74,10 @@ def extrude(coords, next, E, F, prev_F):
     if z!=next_z: 
         gcode_cmd+='Z'+str(round(next_z,4))+' '
     
-    gcode_cmd+= 'E'+str(round(E,4))
+    gcode_cmd+= 'E'+str(round(float(E), 4))
     
         #cweighted speed, put in extrude function later
+    F = float(F)
     if F!=prev_F:          
         gcode_cmd+=(' F'+str(int(F*60))+'\n')  
         prev_F=F   
@@ -274,14 +287,10 @@ def read_weightmap_from_vcol(obj, vcol_name):
     for i in range(len(map)):#iter over v_idx in map in ascending order, to get parallel running color array for vert indices
 #    for v_idx in map:
         loop_idx = map[i]
-        col = obj.data.vertex_colors[vcol_name].data[loop_idx].color[:3]
-        
-        luma = (col[0]*0.299+col[1]*0.587+col[2]*0.114)#/3 already normalized
-        
-        vcol.append(luma)
+        color = obj.data.color_attributes[vcol_name].data[loop_idx].color[:3]
+        vcol.append((color[0], color[1], color[2]))
     
-    
-    return vcol #return one luma value per vert of weightmap
+    return vcol #return RGB tuples per vert of weightmap
 
 
 
